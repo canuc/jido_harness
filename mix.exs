@@ -220,9 +220,15 @@ defmodule Jido.Harness.MixProject do
   def application do
     [
       mod: {Jido.Harness.Application, []},
-      extra_applications: [:logger, :erlexec]
+      extra_applications: [:logger | erlexec_application()]
     ]
   end
+
+  # erlexec starts a native helper that is not built for Windows, where its
+  # application cannot start: processes run through
+  # Jido.Harness.ProcessDriver.Port there.
+  defp windows?, do: match?({:win32, _name}, :os.type())
+  defp erlexec_application, do: if(windows?(), do: [], else: [:erlexec])
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
@@ -233,7 +239,7 @@ defmodule Jido.Harness.MixProject do
       {:zoi, ">= 0.17.1 and < 0.19.0"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.3"},
-      {:erlexec, "~> 2.3"},
+      {:erlexec, "~> 2.3", runtime: not windows?()},
       {:ex_mcp, "~> 1.3"},
 
       # Dev/Test
