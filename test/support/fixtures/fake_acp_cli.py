@@ -33,7 +33,16 @@ def session_capabilities():
     capabilities = {"close": {}}
     if os.environ.get("HARNESS_FIXTURE_NO_FORK") != "1":
         capabilities["fork"] = {}
+    if os.environ.get("HARNESS_FIXTURE_ADDITIONAL_DIRECTORIES") == "1":
+        capabilities["additionalDirectories"] = {}
     return capabilities
+
+
+def record_session_params(message):
+    record_path = os.environ.get("HARNESS_FIXTURE_SESSION_LOG")
+    if record_path:
+        with open(record_path, "a") as record:
+            record.write(json.dumps({"method": message["method"], "params": message.get("params", {})}) + "\n")
 
 
 def complete_prompt(request_id, text="fixture-ok", stop_reason="end_turn"):
@@ -152,6 +161,7 @@ for line in sys.stdin:
             authenticated = True
             send({"jsonrpc": "2.0", "id": request_id, "result": {}})
     elif method == "session/new":
+        record_session_params(message)
         if os.environ.get("HARNESS_FIXTURE_REQUIRE_AUTH_METHOD") and not authenticated:
             send(
                 {
@@ -173,6 +183,7 @@ for line in sys.stdin:
         session_id = "fork-of-" + message.get("params", {}).get("sessionId", "")
         send({"jsonrpc": "2.0", "id": request_id, "result": {"sessionId": session_id}})
     elif method == "session/load":
+        record_session_params(message)
         session_id = message.get("params", {}).get("sessionId", session_id)
         send({"jsonrpc": "2.0", "id": request_id, "result": {"sessionId": session_id}})
     elif method == "session/prompt":

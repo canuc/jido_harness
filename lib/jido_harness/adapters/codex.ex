@@ -33,13 +33,14 @@ defmodule Jido.Harness.Adapters.Codex do
           },
           turn_options: [:attachments, :content],
           configuration_options: [:model, :reasoning_effort, :sandbox_mode],
-          session_options: [:provider_session_id, :mcp_config, :approval_mode],
+          session_options: [:provider_session_id, :mcp_config, :add_dirs, :approval_mode],
           session_provider_options: :adapter
         }),
       normalized_options: [
         :model,
         :provider_session_id,
         :mcp_config,
+        :add_dirs,
         :approval_mode,
         :sandbox_mode,
         :attachments,
