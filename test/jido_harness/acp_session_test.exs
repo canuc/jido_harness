@@ -108,6 +108,52 @@ defmodule Jido.Harness.ACPSessionTest do
              Jido.Harness.Session.await(session_id, turn_id, 2_000)
   end
 
+  test "add_dirs reach session/new and session/load as additionalDirectories when the agent advertises them", %{
+    journal_dir: dir
+  } do
+    log = Path.join(dir, "session.log")
+    File.mkdir_p!(dir)
+
+    env = %{"HARNESS_FIXTURE_ADDITIONAL_DIRECTORIES" => "1", "HARNESS_FIXTURE_SESSION_LOG" => log}
+
+    assert {:ok, new_id} = Jido.Harness.Session.start(:claude, %{add_dirs: ["/srv/extra"], env: env})
+    assert {:ok, _info} = await_ready(new_id)
+
+    assert {:ok, load_id} =
+             Jido.Harness.Session.start(:claude, %{
+               add_dirs: ["/srv/extra"],
+               provider_session_id: "saved-provider-session",
+               env: env
+             })
+
+    assert {:ok, _info} = await_ready(load_id)
+
+    entries = log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+    for method <- ["session/new", "session/load"] do
+      assert %{"params" => %{"additionalDirectories" => ["/srv/extra"]}} =
+               Enum.find(entries, &(&1["method"] == method))
+    end
+  end
+
+  test "add_dirs are dropped when the agent does not advertise additionalDirectories", %{journal_dir: dir} do
+    log = Path.join(dir, "session.log")
+    File.mkdir_p!(dir)
+
+    assert {:ok, session_id} =
+             Jido.Harness.Session.start(:claude, %{
+               add_dirs: ["/srv/extra"],
+               env: %{"HARNESS_FIXTURE_SESSION_LOG" => log}
+             })
+
+    assert {:ok, _info} = await_ready(session_id)
+
+    assert [%{"method" => "session/new", "params" => params}] =
+             log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+    refute Map.has_key?(params, "additionalDirectories")
+  end
+
   test "a fork fails to open when the ACP agent does not advertise forking" do
     assert {:ok, session_id} =
              Jido.Harness.Session.start(:kimi, %{
