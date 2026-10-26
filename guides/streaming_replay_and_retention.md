@@ -50,6 +50,7 @@ Default limits are:
 | Setting | Default |
 | --- | --- |
 | Memory tail | 1 MiB |
+| Unread live process output | 64 MiB |
 | Journal segment | 8 MiB |
 | Total journal | 256 MiB |
 | Terminal-resource TTL | 24 hours |
@@ -60,8 +61,13 @@ Retention maps accept:
 - `memory_bytes`
 - `segment_bytes`
 - `disk_limit_bytes`
+- `unread_limit_bytes` (process specifications only)
 
-Unknown keys and invalid byte relationships are rejected.
+Unknown keys and invalid byte relationships are rejected. `unread_limit_bytes`
+is how far the live reader of a process, such as the internal ACP transport,
+can fall behind before it loses output: what it has not taken yet is kept past
+the memory tail up to this limit. See the
+[configuration reference](reference/configuration_reference.md#process_manager).
 
 Each retained segment has a sparse sequence-to-byte index. Replay seeks to a
 checkpoint near the requested cursor, then reads the requested page. Index

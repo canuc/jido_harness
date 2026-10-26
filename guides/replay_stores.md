@@ -98,7 +98,9 @@ policy; this change does not redact them.
 Each resource also keeps a sanitized fallback tree, bounded by `memory_bytes`
 (default 1 MiB) and 10,000 records. This is separate from the original live event
 buffer and the selected store. Include all of them when sizing memory. Selecting
-a memory adapter does not remove the fallback budget.
+a memory adapter does not remove the fallback budget. A process's live buffer
+also holds up to `unread_limit_bytes` (default 64 MiB) of output its live reader
+has not taken yet.
 
 A failed open or append keeps execution active and uses fallback for the rest
 of that resource's lifetime. Later appends still attempt the selected store.

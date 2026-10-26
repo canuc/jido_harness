@@ -103,9 +103,12 @@ default. Partial frames have the separate frame limit.
 
 The reader pauses when the complete frame queue reaches half the limit. It
 resumes when the queue falls to one quarter. Send, close, and cancellation
-requests remain available while the reader is paused. Output that exceeds
-the process memory buffer produces an explicit `output_gap` transport failure.
-Set `:process_manager` `memory_bytes` for the largest expected ACP output burst.
+requests remain available while the reader is paused. Meanwhile the process
+keeps the output the reader has not taken, past `memory_bytes`, up to
+`:process_manager` `unread_limit_bytes`. A reader that falls further behind
+than that loses output, which produces an explicit `output_gap` transport
+failure. Set `unread_limit_bytes` for the largest expected ACP output burst,
+such as an agent replaying a long conversation when a session is loaded.
 This bounds retained output; it does not limit the operating system producer's
 mailbox traffic.
 
@@ -143,6 +146,7 @@ config :jido_harness,
 | --- | --- | --- |
 | `journal_dir` | user cache directory | Base directory for resource journals |
 | `memory_bytes` | 1 MiB | Default process output buffer, including the internal ACP process; per-process retention overrides it |
+| `unread_limit_bytes` | 64 MiB | Output a live reader has not taken that a process keeps past `memory_bytes`; a reader further behind gets a gap. Per-process retention overrides it |
 | `segment_bytes` | 8 MiB | Journal rotation segment size |
 | `disk_limit_bytes` | 256 MiB | Maximum journal bytes per resource |
 | `terminal_ttl_ms` | 24 hours | Age at which terminal resources are pruned |
@@ -152,8 +156,18 @@ config :jido_harness,
 | `output_drain_ms` | 50 milliseconds | Quiet period for stdout/stderr already in flight after process exit |
 
 Per-resource retention can set `journal_dir`, `memory_bytes`, `segment_bytes`,
-and `disk_limit_bytes`. Per-resource values override process-manager journal
-defaults. Memory defaults to 1 MiB.
+and `disk_limit_bytes`; process retention can also set `unread_limit_bytes`.
+Per-resource values override process-manager journal defaults. Memory defaults
+to 1 MiB.
+
+A process's output buffer is a rolling window of its latest `memory_bytes`.
+While a live reader, such as the internal ACP transport, is reading, the output
+it has not taken yet stays past that window until it exceeds
+`unread_limit_bytes`; only then is the oldest of it dropped, which the reader
+sees as a gap. A limit below `memory_bytes` keeps what the window would. A
+process that nobody reads live keeps only the window. When the live reader
+exits, or is told of a gap, the output it had not taken goes back to the
+window.
 
 ## Process driver
 

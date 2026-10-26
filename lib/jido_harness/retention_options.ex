@@ -4,28 +4,36 @@ defmodule Jido.Harness.RetentionOptions do
   alias Jido.Harness.Error
 
   @keys [:journal_dir, :memory_bytes, :segment_bytes, :disk_limit_bytes]
-  @key_strings Map.new(@keys, &{Atom.to_string(&1), &1})
+  # Only a managed process has a live reader whose unread output is kept.
+  @process_keys @keys ++ [:unread_limit_bytes]
   @default_segment_bytes 8 * 1_024 * 1_024
   @default_disk_limit_bytes 256 * 1_024 * 1_024
 
-  @doc "Normalizes retention keys and validates byte limits and the journal directory."
-  @spec normalize(map()) :: {:ok, map()} | {:error, Error.t()}
-  def normalize(options) when is_map(options) do
-    with {:ok, options} <- normalize_keys(options),
+  @doc """
+  Normalizes retention keys and validates byte limits and the journal directory.
+  `:process` retention also accepts `unread_limit_bytes`.
+  """
+  @spec normalize(map(), :process | :resource) :: {:ok, map()} | {:error, Error.t()}
+  def normalize(options, kind \\ :resource)
+
+  def normalize(options, kind) when is_map(options) do
+    keys = if kind == :process, do: @process_keys, else: @keys
+
+    with {:ok, options} <- normalize_keys(options, keys),
          options = fit_default_segment(options),
          :ok <- validate_values(options) do
       {:ok, options}
     end
   end
 
-  def normalize(_options), do: {:error, Error.validation("retention must be a map")}
+  def normalize(_options, _kind), do: {:error, Error.validation("retention must be a map")}
 
-  defp normalize_keys(options) do
+  defp normalize_keys(options, keys) do
     Enum.reduce_while(options, {:ok, %{}}, fn {key, value}, {:ok, normalized} ->
       normalized_key =
         cond do
-          is_atom(key) and key in @keys -> key
-          is_binary(key) -> Map.get(@key_strings, key)
+          is_atom(key) and key in keys -> key
+          is_binary(key) -> Enum.find(keys, &(Atom.to_string(&1) == key))
           true -> nil
         end
 
@@ -43,7 +51,7 @@ defmodule Jido.Harness.RetentionOptions do
   end
 
   defp validate_values(options) do
-    byte_fields = [:memory_bytes, :segment_bytes, :disk_limit_bytes]
+    byte_fields = [:memory_bytes, :segment_bytes, :disk_limit_bytes, :unread_limit_bytes]
     invalid = Enum.find(byte_fields, &(Map.has_key?(options, &1) and not positive_integer?(Map.get(options, &1))))
     segment = Map.get(options, :segment_bytes, @default_segment_bytes)
     disk_limit = Map.get(options, :disk_limit_bytes, @default_disk_limit_bytes)

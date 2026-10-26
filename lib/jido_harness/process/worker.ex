@@ -10,6 +10,13 @@ defmodule Jido.Harness.ProcessWorker do
   @output_drain_deadline_factor 4
   @terminal_statuses [:exited, :failed, :cancelled, :timed_out]
 
+  # How far a live reader may fall behind before it loses output. An ACP agent
+  # that reopens a session writes the whole history at once (17 MB for one
+  # Claude conversation) while the reader may be stalled; this holds several
+  # times that, and still bounds what one process keeps for a reader that has
+  # stopped reading.
+  @default_unread_limit_bytes 64 * 1_048_576
+
   def start_link({id, spec}) do
     GenServer.start_link(__MODULE__, {id, spec}, name: {:via, Registry, {Jido.Harness.ProcessRegistry, id}})
   end
@@ -20,6 +27,14 @@ defmodule Jido.Harness.ProcessWorker do
     now = timestamp()
     manager_config = Application.get_env(:jido_harness, :process_manager, %{}) |> Map.new()
     memory_bytes = Map.get(spec.retention, :memory_bytes, Map.get(manager_config, :memory_bytes, 1_048_576))
+
+    unread_limit_bytes =
+      Map.get(
+        spec.retention,
+        :unread_limit_bytes,
+        Map.get(manager_config, :unread_limit_bytes, @default_unread_limit_bytes)
+      )
+
     event_log = EventLog.open(:process, id, Map.put_new(spec.retention, :memory_bytes, memory_bytes))
 
     state = %{
@@ -35,7 +50,7 @@ defmodule Jido.Harness.ProcessWorker do
       exit_status: nil,
       error: nil,
       sequence: 0,
-      buffer: Buffer.new(memory_bytes),
+      buffer: Buffer.new(memory_bytes, unread_limit_bytes),
       event_log: event_log,
       runtime_timer: nil,
       runtime_token: nil,
@@ -50,6 +65,7 @@ defmodule Jido.Harness.ProcessWorker do
       exit_reason: nil,
       waiters: %{},
       output_waiter: nil,
+      live_reader: nil,
       cancel_grace_ms: Map.get(manager_config, :cancel_grace_ms, @default_grace_ms),
       term_grace_ms: Map.get(manager_config, :term_grace_ms, @default_grace_ms),
       output_drain_ms: bounded_output_drain_ms(Map.get(manager_config, :output_drain_ms, @default_output_drain_ms))
@@ -102,22 +118,21 @@ defmodule Jido.Harness.ProcessWorker do
       do: {:reply, {:error, :reader_busy}, state}
 
   def handle_call({:live_output, cursor, limit}, from, state) do
+    state = note_reader(state, elem(from, 0), cursor)
+
     cond do
       cursor < state.sequence ->
-        events = state.buffer |> Buffer.events() |> Enum.filter(&(&1.sequence > cursor)) |> Enum.take(limit)
-
-        case events do
-          [first | _] when first.sequence == cursor + 1 -> {:reply, {:ok, events}, state}
-          [first | _] -> {:reply, {:gap, first.sequence}, state}
-          [] -> {:reply, {:gap, state.sequence + 1}, state}
+        case Buffer.events_after(state.buffer, cursor, limit) do
+          [first | _] = events when first.sequence == cursor + 1 -> {:reply, {:ok, events}, state}
+          [first | _] -> {:reply, {:gap, first.sequence}, forget_reader(state)}
+          [] -> {:reply, {:gap, state.sequence + 1}, forget_reader(state)}
         end
 
       state.status in @terminal_statuses ->
         {:reply, :eof, state}
 
       true ->
-        monitor = Process.monitor(elem(from, 0))
-        {:noreply, %{state | output_waiter: {from, monitor}}}
+        {:noreply, %{state | output_waiter: from}}
     end
   end
 
@@ -208,15 +223,12 @@ defmodule Jido.Harness.ProcessWorker do
     {:noreply, begin_stop(state, :cancelled)}
   end
 
-  def handle_info({:DOWN, monitor, :process, _pid, _reason}, state) do
-    state =
-      case state.output_waiter do
-        {_from, ^monitor} -> %{state | output_waiter: nil}
-        _ -> %{state | waiters: Waiters.drop_monitor(state.waiters, monitor)}
-      end
+  # A waiting live read always comes from the live reader, so its exit ends both.
+  def handle_info({:DOWN, monitor, :process, _pid, _reason}, %{live_reader: {_reader, monitor}} = state),
+    do: {:noreply, %{state | output_waiter: nil, live_reader: nil, buffer: Buffer.clear_mark(state.buffer)}}
 
-    {:noreply, state}
-  end
+  def handle_info({:DOWN, monitor, :process, _pid, _reason}, state),
+    do: {:noreply, %{state | waiters: Waiters.drop_monitor(state.waiters, monitor)}}
 
   def handle_info({:escalate, :sigterm}, %{status: :stopping, exit_drain_token: nil} = state) do
     _ = signal(state, :sigterm)
@@ -259,10 +271,29 @@ defmodule Jido.Harness.ProcessWorker do
 
   defp deliver_output(%{output_waiter: nil} = state, _event), do: state
 
-  defp deliver_output(%{output_waiter: {from, monitor}} = state, event) do
-    Process.demonitor(monitor, [:flush])
+  defp deliver_output(%{output_waiter: from} = state, event) do
     GenServer.reply(from, {:ok, [event]})
     %{state | output_waiter: nil}
+  end
+
+  # The cursor a live reader asks from is how far it has read. Output after it
+  # is kept past `memory_bytes`, up to the unread limit, until the reader takes
+  # it; the reader is monitored so that output it will never take returns to
+  # the rolling window. There is one live reader: a read from another process
+  # takes its place.
+  defp note_reader(%{live_reader: {reader, _monitor}} = state, reader, cursor),
+    do: %{state | buffer: Buffer.mark_read(state.buffer, cursor)}
+
+  defp note_reader(state, reader, cursor) do
+    if state.live_reader, do: Process.demonitor(elem(state.live_reader, 1), [:flush])
+    %{state | live_reader: {reader, Process.monitor(reader)}, buffer: Buffer.mark_read(state.buffer, cursor)}
+  end
+
+  # A reader told of a gap has lost its place; until it reads again, nothing
+  # it has not read is kept for it.
+  defp forget_reader(%{live_reader: {_reader, monitor}} = state) do
+    Process.demonitor(monitor, [:flush])
+    %{state | live_reader: nil, buffer: Buffer.clear_mark(state.buffer)}
   end
 
   defp replay_records(state, cursor, limit) do

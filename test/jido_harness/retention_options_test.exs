@@ -16,6 +16,17 @@ defmodule Jido.Harness.RetentionOptionsTest do
     assert session.retention == %{journal_dir: "/tmp", memory_bytes: 512}
   end
 
+  test "only process retention accepts an unread output limit" do
+    assert {:ok, process} = ProcessSpec.new(%{executable: "/bin/echo", retention: %{"unread_limit_bytes" => 8_192}})
+    assert process.retention == %{unread_limit_bytes: 8_192}
+
+    assert {:error, %Jido.Harness.Error{details: %{field: :unread_limit_bytes}}} =
+             ProcessSpec.new(%{executable: "/bin/echo", retention: %{unread_limit_bytes: 0}})
+
+    assert {:error, %Jido.Harness.Error{message: "unknown retention option"}} =
+             SessionRequest.new(%{retention: %{unread_limit_bytes: 8_192}})
+  end
+
   test "rejects unknown, invalid, and internally inconsistent retention options" do
     assert {:error, %Jido.Harness.Error{message: "unknown retention option"}} =
              SessionRequest.new(%{retention: %{unknown: true}})
