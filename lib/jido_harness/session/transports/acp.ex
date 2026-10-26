@@ -2,7 +2,7 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
   @moduledoc false
   use GenServer, restart: :temporary
 
-  alias ExMCP.ACP.Client
+  alias ExMCP.ACP.{Capabilities, Client}
   alias Jido.Harness.{ApprovalResponse, Error, Event, ID, TurnRequest}
   alias Jido.Harness.SessionAdapters.ACP.{ExMCPHandler, ExMCPTransport}
   alias Jido.Harness.SessionAdapters.ACP.ExMCPTransport.Bridge
@@ -399,7 +399,7 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
   end
 
   defp open_session(client, request) do
-    options = [mcp_servers: mcp_servers(request.mcp_config)]
+    options = [mcp_servers: mcp_servers(request.mcp_config)] ++ additional_directories(client, request)
 
     cond do
       is_binary(request.fork_session_id) ->
@@ -414,6 +414,20 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
         Client.new_session(client, request.cwd, options)
     end
   end
+
+  # Extra folders ride on the session lifecycle calls only when the agent
+  # advertises `sessionCapabilities.additionalDirectories`; otherwise they are
+  # dropped, since ExMCP would refuse the whole call.
+  defp additional_directories(client, %{add_dirs: [_ | _] = dirs}) do
+    with {:ok, capabilities} <- Client.agent_capabilities(client),
+         true <- Capabilities.supported?(capabilities || %{}, :additional_directories) do
+      [additional_directories: dirs]
+    else
+      _unsupported -> []
+    end
+  end
+
+  defp additional_directories(_client, _request), do: []
 
   defp provider_session_id(result, request) do
     case result["sessionId"] || result["session_id"] || request.provider_session_id do

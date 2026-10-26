@@ -26,11 +26,12 @@ defmodule Jido.Harness.Adapters.Claude do
           "@agentclientprotocol/claude-agent-acp@0.70.0",
           %{
             capabilities: %{load_session: true, multimodal: true, dynamic_model: true, usage: true},
+            session_options: [:provider_session_id, :mcp_config, :add_dirs],
             turn_options: [:attachments, :content],
             configuration_options: [:model]
           }
         ),
-      normalized_options: [:model, :provider_session_id, :mcp_config, :attachments],
+      normalized_options: [:model, :provider_session_id, :mcp_config, :add_dirs, :attachments],
       install: %{npm: "@anthropic-ai/claude-code"}
     }
   end
