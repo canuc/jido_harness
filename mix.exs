@@ -201,7 +201,7 @@ defmodule Jido.Harness.MixProject do
       {:zoi, "~> 0.18.11"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.3"},
-      {:arbor_acp, "~> 1.0.0-rc.1"},
+      {:arbor_acp, "~> 1.0.0-rc.3"},
 
       # Dev/Test
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
