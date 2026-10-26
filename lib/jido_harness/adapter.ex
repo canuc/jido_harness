@@ -21,9 +21,13 @@ defmodule Jido.Harness.Adapter do
   @callback acp_validate_request(SessionRequest.t()) :: :ok | {:error, term()}
   @callback acp_validate_capabilities(SessionRequest.t(), map()) :: :ok | {:error, term()}
 
+  @doc "Returns the ACP `_meta` object sent when a session is opened, loaded or forked."
+  @callback acp_session_meta(SessionRequest.t()) :: map() | nil
+
   @optional_callbacks install: 2,
                       acp_env: 2,
                       acp_validate_request: 1,
                       acp_validate_capabilities: 2,
-                      acp_configuration: 1
+                      acp_configuration: 1,
+                      acp_session_meta: 1
 end

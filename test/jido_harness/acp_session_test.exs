@@ -9,12 +9,14 @@ defmodule Jido.Harness.ACPSessionTest do
 
     Application.put_env(:jido_harness, :providers, %{
       kimi: Jido.Harness.Adapters.Kimi,
-      claude: Jido.Harness.Adapters.Claude
+      claude: Jido.Harness.Adapters.Claude,
+      codex: Jido.Harness.Adapters.Codex
     })
 
     Application.put_env(:jido_harness, :provider_config, %{
       kimi: %{acp_path: fixture, retention: %{journal_dir: journal_dir}},
-      claude: %{acp_path: fixture, retention: %{journal_dir: journal_dir}}
+      claude: %{acp_path: fixture, retention: %{journal_dir: journal_dir}},
+      codex: %{acp_path: fixture, retention: %{journal_dir: journal_dir}}
     })
 
     on_exit(fn ->
@@ -152,6 +154,59 @@ defmodule Jido.Harness.ACPSessionTest do
              log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
 
     refute Map.has_key?(params, "additionalDirectories")
+  end
+
+  test "Claude disallowed_tools and strict_mcp_config reach session/new, load and fork as claudeCode options", %{
+    journal_dir: dir
+  } do
+    log = Path.join(dir, "session.log")
+    File.mkdir_p!(dir)
+
+    limits = %{
+      disallowed_tools: ["Bash", "Monitor"],
+      provider_options: %{strict_mcp_config: true},
+      env: %{"HARNESS_FIXTURE_SESSION_LOG" => log}
+    }
+
+    for attrs <- [%{}, %{provider_session_id: "saved-provider-session"}, %{fork_session_id: "saved-provider-session"}] do
+      assert {:ok, session_id} = Jido.Harness.Session.start(:claude, Map.merge(limits, attrs))
+      assert {:ok, _info} = await_ready(session_id)
+    end
+
+    entries = log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+    assert entries |> Enum.map(& &1["method"]) |> Enum.sort() == ["session/fork", "session/load", "session/new"]
+
+    for %{"params" => params} <- entries do
+      assert params["_meta"] == %{
+               "claudeCode" => %{"options" => %{"disallowedTools" => ["Bash", "Monitor"], "strictMcpConfig" => true}}
+             }
+    end
+  end
+
+  test "a Claude session without tool limits sends no _meta", %{journal_dir: dir} do
+    log = Path.join(dir, "session.log")
+    File.mkdir_p!(dir)
+
+    assert {:ok, session_id} =
+             Jido.Harness.Session.start(:claude, %{
+               provider_options: %{"strict_mcp_config" => false},
+               env: %{"HARNESS_FIXTURE_SESSION_LOG" => log}
+             })
+
+    assert {:ok, _info} = await_ready(session_id)
+
+    assert [%{"method" => "session/new", "params" => params}] =
+             log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+    refute Map.has_key?(params, "_meta")
+  end
+
+  test "disallowed_tools is refused outside Claude and strict_mcp_config must be a boolean" do
+    assert {:error, %Jido.Harness.Error{details: %{field: :disallowed_tools}}} =
+             Jido.Harness.Session.start(:codex, %{disallowed_tools: ["Bash"]})
+
+    assert {:error, %Jido.Harness.Error{details: %{option: :strict_mcp_config}}} =
+             Jido.Harness.Session.start(:claude, %{provider_options: %{strict_mcp_config: "yes"}})
   end
 
   test "a fork fails to open when the ACP agent does not advertise forking" do

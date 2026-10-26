@@ -368,7 +368,7 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
   defp initialize_session(client, request, state) do
     with :ok <- validate_provider_capabilities(client, request, state.context.adapter),
          :ok <- authenticate(client, state.context.acp_agent),
-         {:ok, result} <- open_session(client, request),
+         {:ok, result} <- open_session(client, request, state.context.adapter),
          {:ok, provider_session_id} <- provider_session_id(result, request),
          :ok <- record_session_configuration(state, provider_session_id, result),
          :ok <- apply_initial_configuration(client, provider_session_id, request, state.context) do
@@ -420,8 +420,10 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
     :ok
   end
 
-  defp open_session(client, request) do
-    options = [mcp_servers: mcp_servers(request.mcp_config)] ++ additional_directories(client, request)
+  defp open_session(client, request, adapter) do
+    options =
+      [mcp_servers: mcp_servers(request.mcp_config)] ++
+        additional_directories(client, request) ++ session_meta(adapter, request)
 
     cond do
       is_binary(request.fork_session_id) ->
@@ -450,6 +452,14 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
   end
 
   defp additional_directories(_client, _request), do: []
+
+  # Adapters may send provider-specific `_meta` with the session lifecycle
+  # calls, such as the `claudeCode.options` claude-agent-acp reads.
+  defp session_meta(adapter, request) do
+    meta = if function_exported?(adapter, :acp_session_meta, 1), do: adapter.acp_session_meta(request)
+
+    if is_map(meta) and map_size(meta) > 0, do: [meta: meta], else: []
+  end
 
   defp provider_session_id(result, request) do
     case result["sessionId"] || result["session_id"] || request.provider_session_id do
