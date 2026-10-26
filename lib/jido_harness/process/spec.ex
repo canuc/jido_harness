@@ -140,7 +140,7 @@ defmodule Jido.Harness.ProcessSpec do
         invalid("metadata and retention must be maps")
 
       true ->
-        case Jido.Harness.RetentionOptions.normalize(spec.retention) do
+        case Jido.Harness.RetentionOptions.normalize(spec.retention, :process) do
           {:ok, retention} -> {:ok, %{spec | retention: retention}}
           {:error, _reason} = error -> error
         end
