@@ -180,6 +180,7 @@ for line in sys.stdin:
                 }]
             send({"jsonrpc": "2.0", "id": request_id, "result": result})
     elif method == "session/fork":
+        record_session_params(message)
         session_id = "fork-of-" + message.get("params", {}).get("sessionId", "")
         send({"jsonrpc": "2.0", "id": request_id, "result": {"sessionId": session_id}})
     elif method == "session/load":

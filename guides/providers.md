@@ -194,3 +194,14 @@ This uses the Codex CLI controls and the Harness process API.
 Codex sandbox values select the ACP mode. Harness `approval_mode` controls
 its permission responses. Environment replacement, sandbox mode, and saved
 thread state are separate controls; see [Security](security.md).
+
+## Claude tool limits
+
+Claude Code accepts the normalized `disallowed_tools` and the
+`provider_options` boolean `strict_mcp_config`. Harness sends them as
+`_meta.claudeCode.options` (`disallowedTools`, `strictMcpConfig`) on
+`session/new`, `session/load`, and `session/fork`. claude-agent-acp passes them
+to the Claude Agent SDK: disallowed tools are removed from the model's context
+even when user settings allow them, and a strict MCP configuration ignores MCP
+servers not given in the ACP call. Other built-in profiles refuse
+`disallowed_tools`.
