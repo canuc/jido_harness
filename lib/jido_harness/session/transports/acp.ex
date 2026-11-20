@@ -651,14 +651,17 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
       "tool_call" -> {[event(:tool_call, update)], state}
       "tool_call_update" -> tool_call_update(update, state)
       "plan" -> {[event(:plan_updated, update)], state}
-      "plan_update" -> {[event(:plan_updated, plan_entries(update))], state}
-      "state_update" -> {[event(:provider_event, session_state(update))], state}
       type when type in ["usage", "usage_update"] -> {[event(:usage, Map.drop(update, ["sessionUpdate"]))], state}
-      _other -> {[event(:provider_event, %{"kind" => "acp_update", "update" => update})], state}
+      _other -> {[v2_update(type, update)], state}
     end
   end
 
   defp map_update(update, state), do: {[event(:provider_event, %{"kind" => "acp_update", "update" => update})], state}
+
+  # The update kinds only v2 has; anything else is passed on as it came.
+  defp v2_update("plan_update", update), do: event(:plan_updated, plan_entries(update))
+  defp v2_update("state_update", update), do: event(:provider_event, session_state(update))
+  defp v2_update(_type, update), do: event(:provider_event, %{"kind" => "acp_update", "update" => update})
 
   # v2 has one update for a tool call, sent when it starts and each time it
   # changes; v1 has `tool_call` for the start. The first one heard of a call
