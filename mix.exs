@@ -201,7 +201,10 @@ defmodule Jido.Harness.MixProject do
       {:zoi, "~> 0.18.11"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.3"},
-      {:arbor_acp, "~> 1.0.0-rc.3"},
+      # Our fork: the released client plus draft ACP v2, agreed with the agent
+      # at initialize (branch feat/acp-v2 of canuc/arbor_acp).
+      {:arbor_acp,
+       github: "canuc/arbor_acp", ref: "9a9b6dfefaf0c1f1b84a76930dcc13142393b0b9", sparse: "packages/arbor_acp"},
 
       # Dev/Test
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

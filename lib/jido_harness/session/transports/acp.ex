@@ -13,6 +13,11 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
   @protocol_timeout_margin 5_000
   @maximum_protocol_timeout 4_294_967_295
   @steer_timeout 10_000
+  @supported_protocol_versions [1, 2]
+  # Tool calls a v2 session has been told of. A session that runs for days
+  # must not grow without bound; past this many the oldest knowledge is
+  # dropped, and a late update of a forgotten call reads as a new call.
+  @max_known_tool_calls 4_096
 
   def start_link({request, context}), do: GenServer.start_link(__MODULE__, {request, context})
 
@@ -40,6 +45,9 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
        approvals: %{},
        # the transport bridge, when the agent advertised ACP steering
        steering: nil,
+       # the ACP version agreed with the agent at initialize
+       protocol_version: 1,
+       known_tool_calls: MapSet.new(),
        closing?: false
      }}
   end
@@ -149,7 +157,16 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
     Process.cancel_timer(state.startup_timer)
     Process.demonitor(state.client_starter_monitor, [:flush])
     Process.link(client)
-    state = %{state | client: client, client_starter_monitor: nil, initialize_from: nil, startup_timer: nil}
+
+    state = %{
+      state
+      | client: client,
+        client_starter_monitor: nil,
+        initialize_from: nil,
+        startup_timer: nil,
+        protocol_version: Client.protocol_version(client)
+    }
+
     {:reply, result, state} = initialize_session(client, state.request, state)
     GenServer.reply(from, result)
     {:noreply, state}
@@ -178,9 +195,9 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
     {turn_id, pending_updates} =
       take_pending_update(state.pending_updates, provider_session_id, update, state.active_turn_id)
 
-    update
-    |> map_update()
-    |> Enum.each(fn event ->
+    {events, state} = map_update(update, state)
+
+    Enum.each(events, fn event ->
       event = %{
         event
         | provider: state.provider,
@@ -324,6 +341,7 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
       },
       event_listener: self(),
       protocol_version: 1,
+      protocol_versions: protocol_versions(state.context.config),
       max_frame_bytes: ArborACPTransport.max_frame_bytes(),
       initialize_timeout: @startup_timeout,
       pending_request_timeout: protocol_timeout(state.request.turn_runtime_timeout_ms),
@@ -368,8 +386,9 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
   defp initialize_session(client, request, state) do
     with :ok <- validate_provider_capabilities(client, request, state.context.adapter),
          :ok <- authenticate(client, state.context.acp_agent),
-         {:ok, result} <- open_session(client, request, state.context.adapter),
+         {:ok, result} <- open_session(client, request, state),
          {:ok, provider_session_id} <- provider_session_id(result, request),
+         :ok <- record_protocol_version(state, provider_session_id),
          :ok <- record_session_configuration(state, provider_session_id, result),
          :ok <- apply_initial_configuration(client, provider_session_id, request, state.context) do
       {:reply, {:ok, provider_session_id}, %{state | client: client, provider_session_id: provider_session_id}}
@@ -420,7 +439,33 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
     :ok
   end
 
-  defp open_session(client, request, adapter) do
+  # Said only for a version other than 1, so a v1 session's events are what
+  # they always were.
+  defp record_protocol_version(%{protocol_version: 1}, _provider_session_id), do: :ok
+
+  defp record_protocol_version(state, provider_session_id) do
+    emit(%{state | provider_session_id: provider_session_id}, :provider_event, %{
+      "kind" => "acp_protocol",
+      "version" => state.protocol_version
+    })
+
+    :ok
+  end
+
+  # The versions to offer the agent, highest first. Only a provider whose
+  # configuration asks for it (`acp_protocol_versions: [2, 1]`) is offered
+  # more than v1: draft v2 changes with the protocol's releases.
+  defp protocol_versions(config) do
+    case config_value(config, :acp_protocol_versions) do
+      [_ | _] = versions ->
+        if Enum.all?(versions, &(&1 in @supported_protocol_versions)), do: Enum.uniq(versions), else: [1]
+
+      _unset ->
+        [1]
+    end
+  end
+
+  defp open_session(client, request, %{context: %{adapter: adapter}} = state) do
     options =
       [mcp_servers: mcp_servers(request.mcp_config)] ++
         additional_directories(client, request) ++ session_meta(adapter, request)
@@ -430,6 +475,11 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
         # `session/fork` is still unstable in ACP; the client refuses it for an
         # agent that does not advertise `sessionCapabilities.fork`.
         Client.fork_session(client, request.fork_session_id, request.cwd, options)
+
+      # v2 has no `session/load`: `session/resume` opens the session, and
+      # replays its history only when asked to.
+      is_binary(request.provider_session_id) and state.protocol_version == 2 ->
+        Client.resume_session(client, request.provider_session_id, request.cwd, options)
 
       is_binary(request.provider_session_id) ->
         Client.load_session(client, request.provider_session_id, request.cwd, options)
@@ -594,19 +644,55 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
   defp error_message(%{message: message}) when is_binary(message), do: message
   defp error_message(reason), do: inspect(reason)
 
-  defp map_update(%{"sessionUpdate" => type} = update) do
+  defp map_update(%{"sessionUpdate" => type} = update, state) do
     case type do
-      "agent_message_chunk" -> text_event(:output_text_delta, update)
-      "agent_thought_chunk" -> text_event(:thinking_delta, update)
-      "tool_call" -> [event(:tool_call, update)]
-      "tool_call_update" -> [event(:tool_result, update)]
-      "plan" -> [event(:plan_updated, update)]
-      type when type in ["usage", "usage_update"] -> [event(:usage, Map.drop(update, ["sessionUpdate"]))]
-      _other -> [event(:provider_event, %{"kind" => "acp_update", "update" => update})]
+      "agent_message_chunk" -> {text_event(:output_text_delta, update), state}
+      "agent_thought_chunk" -> {text_event(:thinking_delta, update), state}
+      "tool_call" -> {[event(:tool_call, update)], state}
+      "tool_call_update" -> tool_call_update(update, state)
+      "plan" -> {[event(:plan_updated, update)], state}
+      "plan_update" -> {[event(:plan_updated, plan_entries(update))], state}
+      "state_update" -> {[event(:provider_event, session_state(update))], state}
+      type when type in ["usage", "usage_update"] -> {[event(:usage, Map.drop(update, ["sessionUpdate"]))], state}
+      _other -> {[event(:provider_event, %{"kind" => "acp_update", "update" => update})], state}
     end
   end
 
-  defp map_update(update), do: [event(:provider_event, %{"kind" => "acp_update", "update" => update})]
+  defp map_update(update, state), do: {[event(:provider_event, %{"kind" => "acp_update", "update" => update})], state}
+
+  # v2 has one update for a tool call, sent when it starts and each time it
+  # changes; v1 has `tool_call` for the start. The first one heard of a call
+  # is its start here too, so a host sees the same two events on both.
+  defp tool_call_update(%{"toolCallId" => id} = update, %{protocol_version: 2} = state) when is_binary(id) do
+    if MapSet.member?(state.known_tool_calls, id) do
+      {[event(:tool_result, update)], state}
+    else
+      known =
+        if MapSet.size(state.known_tool_calls) >= @max_known_tool_calls, do: MapSet.new(), else: state.known_tool_calls
+
+      {[event(:tool_call, update)], %{state | known_tool_calls: MapSet.put(known, id)}}
+    end
+  end
+
+  defp tool_call_update(update, state), do: {[event(:tool_result, update)], state}
+
+  # A v2 plan is `plan.items`; a host reads a plan's `entries`, as v1 has them.
+  defp plan_entries(%{"plan" => %{"items" => items}} = update) when is_list(items),
+    do: Map.put_new(update, "entries", items)
+
+  defp plan_entries(update), do: update
+
+  # What a v2 session does now, and the work that goes on in its background
+  # (terminals, tool calls, sub-agents) after a turn has ended. `background`
+  # is left out when the agent left it out: the list is then unchanged.
+  defp session_state(update) do
+    %{"kind" => "acp_session_state", "state" => update["state"]}
+    |> put_present("background", update["background"])
+    |> put_present("stop_reason", update["stopReason"])
+  end
+
+  defp put_present(map, _key, nil), do: map
+  defp put_present(map, key, value), do: Map.put(map, key, value)
 
   defp text_event(type, update) do
     content = update["content"] || %{}

@@ -204,6 +204,39 @@ For application approval rules, see the tested
 [policy job recipe](recipes/policy_jobs.md). Set a finite approval timeout so
 an unanswered permission request cannot wait without a limit.
 
+### Draft ACP v2
+
+A provider is offered ACP v1 unless its configuration asks for more:
+
+```elixir
+config :jido_harness, :provider_config, %{
+  codex: %{acp_protocol_versions: [2, 1]}
+}
+```
+
+The harness then asks the agent for the highest version of the list and takes
+the one the agent answers, so an agent that only has v1 keeps working. ACP v2
+is an experimental draft and may change with any release of the protocol;
+leave the setting out for a provider you have not tried on it.
+
+A session on v2 emits the events a v1 session emits. A turn ends with
+`:turn_completed` and its stop reason, the first update of a tool call is
+`:tool_call` and the later ones `:tool_result`, and a plan has its `entries`.
+Two provider events are added:
+
+- `%{"kind" => "acp_protocol", "version" => 2}` once, when the session opens.
+- `%{"kind" => "acp_session_state", "state" => "running" | "requires_action" |
+  "idle", "background" => [...], "stop_reason" => ...}` each time the agent
+  says what the session does. `background` lists the work that goes on after
+  a turn has ended (`"terminal"`, `"tool_call"` and `"subagent"` entries) and
+  is the whole list each time; it is left out when the agent did not send it.
+  These arrive between turns too, without a turn id.
+
+A saved provider session is opened with `session/resume` on v2, which has no
+`session/load`, and its history is not replayed. Whether steering works
+depends on the agent advertising it on that version: codex-acp 2.8.0 does on
+both, claude-agent-acp 0.100.0 only on v1.
+
 ## Close, kill, and prune
 
 ```elixir
