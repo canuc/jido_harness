@@ -18,6 +18,13 @@ defmodule Jido.Harness.SessionWorker do
 
   import EventStore, only: [append: 2, append_queue_changed: 1]
 
+  def child_spec(args), do: Jido.Harness.Diagnostics.child_spec(__MODULE__, args)
+
+  @before_compile Jido.Harness.Diagnostics
+
+  @impl GenServer
+  def format_status(status), do: Jido.Harness.Diagnostics.format_status(status)
+
   def start_link({id, provider, request, adapter, acp_agent, config}) do
     GenServer.start_link(
       __MODULE__,
@@ -28,6 +35,7 @@ defmodule Jido.Harness.SessionWorker do
 
   @impl true
   def init({id, provider, request, adapter, acp_agent, config}) do
+    :erlang.process_flag(:sensitive, true)
     Process.flag(:trap_exit, true)
     retention = Map.merge(Map.get(config, :retention, %{}) |> Map.new(), request.retention)
     memory_bytes = Map.get(retention, :memory_bytes, 1_048_576)

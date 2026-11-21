@@ -13,6 +13,7 @@ defmodule Jido.Harness.Session.State do
     :event_log
   ]
 
+  @derive {Inspect, only: [:id]}
   defstruct [
     :id,
     :provider,

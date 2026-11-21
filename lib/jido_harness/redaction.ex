@@ -10,15 +10,19 @@ defmodule Jido.Harness.Redaction do
   @bearer ~r/\b[Bb][Ee][Aa][Rr][Ee][Rr]\s+[^\s,;]+/
   @sensitive_key ~r/(^|_)(authorization|cookie|credential|password|secret|token|api_?key)($|_)/i
 
-  @type prepared :: {:harness_redaction, [String.t()]}
+  @type prepared :: {:harness_redaction, (-> [String.t()]) | [String.t()]}
 
   @doc false
   @spec prepare([String.t()]) :: prepared()
-  def prepare(extra_secrets), do: {:harness_redaction, normalize_secrets(extra_secrets ++ system_secrets())}
+  def prepare(extra_secrets) do
+    secrets = normalize_secrets(extra_secrets ++ system_secrets())
+    {:harness_redaction, fn -> secrets end}
+  end
 
   @doc "Removes sensitive fields and replaces known secret strings in nested values."
   @spec redact(term(), [String.t()] | prepared()) :: term()
   def redact(value, extra_secrets \\ [])
+  def redact(value, {:harness_redaction, fetch}) when is_function(fetch, 0), do: do_redact(value, fetch.())
   def redact(value, {:harness_redaction, secrets}), do: do_redact(value, secrets)
   def redact(value, extra_secrets), do: redact(value, prepare(extra_secrets))
 
@@ -52,10 +56,14 @@ defmodule Jido.Harness.Redaction do
     case Process.get({__MODULE__, :system_secrets}) do
       nil ->
         secrets = System.get_env() |> secrets_from_env()
-        Process.put({__MODULE__, :system_secrets}, secrets)
+        Process.put({__MODULE__, :system_secrets}, fn -> secrets end)
         secrets
 
+      fetch when is_function(fetch, 0) ->
+        fetch.()
+
       secrets ->
+        Process.put({__MODULE__, :system_secrets}, fn -> secrets end)
         secrets
     end
   end

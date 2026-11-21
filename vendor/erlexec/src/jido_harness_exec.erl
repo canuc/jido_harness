@@ -73,7 +73,7 @@
 -export([default/0, default/1]).
 
 %% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+-export([format_status/1, init/1, handle_call/3, handle_cast/2, handle_info/2,
          code_change/3, terminate/2]).
 
 -include("exec.hrl").
@@ -966,6 +966,7 @@ default(Option) ->
 %%          {stop, Reason}
 %%-----------------------------------------------------------------------
 init([Options]) ->
+    process_flag(sensitive, true),
     process_flag(trap_exit, true),
     Opts0 = proplists:expand([{debug,   [{debug, 1}]},
                               {root,    [{root, true}]},
@@ -1067,6 +1068,8 @@ init([Options]) ->
 %%          {stop, Reason, Reply, State}   | (terminate/2 is called)
 %%          {stop, Reason, State}            (terminate/2 is called)
 %%----------------------------------------------------------------------
+handle_call({launch, GetInstruction}, From, State) when is_function(GetInstruction, 0) ->
+    handle_call({port, GetInstruction()}, From, State);
 handle_call({port, Instruction}, From, #state{last_trans=Last} = State) ->
     try is_port_command(Instruction, element(1, From), State) of
     {ok, Term} ->
@@ -1199,7 +1202,7 @@ do_run(Cmd, Options, Timeout) when is_integer(Timeout) ->
            _         -> undefined
            end,
     Sync = proplists:get_value(sync, Options, false),
-    Cmd2 = {port, {Cmd, Link, Sync}},
+    Cmd2 = {launch, fun() -> {Cmd, Link, Sync} end},
     case gen_server:call(?MODULE, Cmd2, Timeout) of
     {ok, Pid, OsPid, _Sync = true} ->
         wait_for_ospid_exit(OsPid, Pid, [], []);
@@ -2589,3 +2592,6 @@ without_error_logger(Fun) ->
     try Fun() after error_logger:tty(true) end.
 
 -endif.
+
+format_status(Status) ->
+    maps:merge(Status, maps:with(maps:keys(Status), #{state => redacted, message => redacted, reason => redacted, log => []})).

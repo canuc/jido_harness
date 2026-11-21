@@ -17,12 +17,20 @@ defmodule Jido.Harness.ProcessWorker do
   # stopped reading.
   @default_unread_limit_bytes 64 * 1_048_576
 
+  def child_spec(args), do: Jido.Harness.Diagnostics.child_spec(__MODULE__, args)
+
+  @before_compile Jido.Harness.Diagnostics
+
+  @impl GenServer
+  def format_status(status), do: Jido.Harness.Diagnostics.format_status(status)
+
   def start_link({id, spec}) do
     GenServer.start_link(__MODULE__, {id, spec}, name: {:via, Registry, {Jido.Harness.ProcessRegistry, id}})
   end
 
   @impl true
   def init({id, spec}) do
+    :erlang.process_flag(:sensitive, true)
     Process.flag(:trap_exit, true)
     now = timestamp()
     manager_config = Application.get_env(:jido_harness, :process_manager, %{}) |> Map.new()

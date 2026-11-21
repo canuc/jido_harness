@@ -4,6 +4,9 @@ import os
 import sys
 import time
 
+if os.environ.get("HARNESS_FIXTURE_CHECK_KEY") and os.environ.get("RUNNER_API_KEY") != "dummy-launch-credential-2903":
+    sys.exit(2)
+
 if os.environ.get("HARNESS_FIXTURE_EXIT_BEFORE_INIT") == "1":
     sys.stderr.write("fixture startup failed: " + os.environ.get("HARNESS_FIXTURE_SECRET_TOKEN", "") + "\n")
     sys.stderr.flush()

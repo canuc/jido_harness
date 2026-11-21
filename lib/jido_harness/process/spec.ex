@@ -39,6 +39,7 @@ defmodule Jido.Harness.ProcessSpec do
 
   @type t :: unquote(Zoi.type_spec(@schema))
   @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  @derive {Inspect, only: [:env_mode]}
   defstruct Zoi.Struct.struct_fields(@schema)
 
   @doc "Returns the validation schema for shell-free process specifications."

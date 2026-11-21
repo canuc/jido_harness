@@ -72,6 +72,7 @@ defmodule Jido.Harness.SessionRequest do
 
   @type t :: unquote(Zoi.type_spec(@schema))
   @enforce_keys Zoi.Struct.enforce_keys(@schema)
+  @derive {Inspect, only: [:provider]}
   defstruct Zoi.Struct.struct_fields(@schema)
 
   @key_strings Map.new(@keys, &{Atom.to_string(&1), &1})

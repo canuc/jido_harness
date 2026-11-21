@@ -30,6 +30,39 @@ defmodule Jido.Harness.ACPSessionTest do
     {:ok, journal_dir: journal_dir}
   end
 
+  test "a runner receives its credential while its session crash diagnostics hide it" do
+    key = "dummy-launch-credential-2903"
+    env = %{"HARNESS_FIXTURE_CHECK_KEY" => "1", "RUNNER_API_KEY" => key}
+    assert {:ok, id} = Jido.Harness.Session.start(:kimi, %{env: env})
+    assert {:ok, _} = await_ready(id)
+    [{worker, _}] = Registry.lookup(Jido.Harness.SessionRegistry, id)
+    state = :sys.get_state(worker)
+
+    client = :sys.get_state(state.handle).client
+    bridge = :sys.get_state(client).transport_state.bridge
+    process_id = :sys.get_state(bridge).process_id
+    [{process, _}] = Registry.lookup(Jido.Harness.ProcessRegistry, process_id)
+
+    for pid <- [worker, state.handle, client, bridge, process] do
+      refute inspect(:sys.get_status(pid), limit: :infinity) =~ key
+    end
+
+    refute inspect(state.secrets, limit: :infinity) =~ key
+    refute inspect(Jido.Harness.SessionWorker.child_spec({id, env})) =~ key
+    refute inspect(Jido.Harness.Error.execution("startup failed", cause: env)) =~ key
+
+    report =
+      ExUnit.CaptureLog.capture_log(fn ->
+        monitor = Process.monitor(worker)
+        GenServer.cast(worker, {:unexpected, key})
+        assert_receive {:DOWN, ^monitor, :process, ^worker, _}, 5_000
+        Logger.flush()
+      end)
+
+    assert report =~ "terminating"
+    refute report =~ key
+  end
+
   test "Arbor ACP correlates fragmented responses while Harness owns process and event identity", %{
     journal_dir: journal_dir
   } do
