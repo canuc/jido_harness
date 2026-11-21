@@ -24,6 +24,7 @@ defmodule Jido.Harness.Error do
 
   @type category :: unquote(Enum.reduce(@categories, &{:|, [], [&1, &2]}))
   @type t :: unquote(Zoi.type_spec(@schema))
+  @derive {Inspect, only: [:category]}
   defexception Zoi.Struct.struct_fields(@schema)
 
   @doc "Returns the validation schema for normalized harness exceptions."

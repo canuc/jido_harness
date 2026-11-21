@@ -85,6 +85,11 @@ defmodule Jido.Harness.SessionAdapters.ACP.ArborACPTransport.Bridge do
   # goes to the listener as `{:acp_agent_meta, bridge, meta}`.
   @extension_id_prefix "jido-harness-ext-"
 
+  @before_compile Jido.Harness.Diagnostics
+
+  @impl GenServer
+  def format_status(status), do: Jido.Harness.Diagnostics.format_status(status)
+
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
   def send_message(bridge, message), do: GenServer.call(bridge, {:send, message}, :infinity)
   def receive_message(bridge), do: GenServer.call(bridge, :receive, :infinity)
@@ -116,9 +121,16 @@ defmodule Jido.Harness.SessionAdapters.ACP.ArborACPTransport.Bridge do
 
   @impl true
   def init(opts) do
+    :erlang.process_flag(:sensitive, true)
     process_manager = Keyword.fetch!(opts, :process_manager)
     process_owner = Keyword.fetch!(opts, :process_owner)
-    process_spec = Keyword.fetch!(opts, :process_spec)
+
+    process_spec =
+      case Keyword.fetch(opts, :launch_spec) do
+        {:ok, launch_spec} -> launch_spec.()
+        :error -> Keyword.fetch!(opts, :process_spec)
+      end
+
     listener = Keyword.fetch!(opts, :listener)
 
     secrets =
@@ -166,6 +178,9 @@ defmodule Jido.Harness.SessionAdapters.ACP.ArborACPTransport.Bridge do
 
     {:noreply, %{state | reader: reader}}
   end
+
+  @impl true
+  def handle_cast(_message, state), do: {:stop, :unexpected_cast, state}
 
   @impl true
   def handle_call({:process_event, event}, from, state) do

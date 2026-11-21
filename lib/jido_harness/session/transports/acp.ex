@@ -14,10 +14,18 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
   @maximum_protocol_timeout 4_294_967_295
   @steer_timeout 10_000
 
+  def child_spec(args), do: Jido.Harness.Diagnostics.child_spec(__MODULE__, args)
+
+  @before_compile Jido.Harness.Diagnostics
+
+  @impl GenServer
+  def format_status(status), do: Jido.Harness.Diagnostics.format_status(status)
+
   def start_link({request, context}), do: GenServer.start_link(__MODULE__, {request, context})
 
   @impl true
   def init({request, context}) do
+    :erlang.process_flag(:sensitive, true)
     Process.flag(:trap_exit, true)
 
     {:ok,
@@ -45,7 +53,10 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
   end
 
   @impl true
-  def handle_call({:initialize, request}, from, state) do
+  def handle_cast(_message, state), do: {:stop, :unexpected_cast, state}
+
+  @impl true
+  def handle_call(:initialize, from, %{request: request} = state) do
     with {:ok, process_spec} <- process_spec(request, state.context),
          {:ok, starter} <- start_client(state, process_spec) do
       timer = Process.send_after(self(), :acp_startup_timeout, @startup_timeout)
@@ -308,7 +319,7 @@ defmodule Jido.Harness.SessionAdapters.ACPTransport do
       harness_transport: [
         process_manager: state.context.process_manager,
         process_owner: state.context.owner,
-        process_spec: process_spec,
+        launch_spec: fn -> process_spec end,
         listener: self()
       ],
       handler: ArborACPHandler,

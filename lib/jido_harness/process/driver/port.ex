@@ -165,7 +165,7 @@ defmodule Jido.Harness.ProcessDriver.Port do
 
     {:ok, port}
   rescue
-    error -> {:error, error}
+    _error -> {:error, :port_open_failed}
   end
 
   defp loop(port, os_pid, owner) do

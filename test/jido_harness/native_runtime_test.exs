@@ -61,7 +61,7 @@ defmodule Jido.Harness.NativeRuntimeTest do
         {error, Details} ->
           256 = proplists:get_value(exit_status, Details),
           undefined = proplists:get_value(stdout, Details),
-          [<<"Cannot set effective group to 0", _/binary>>] = proplists:get_value(stderr, Details)
+          <<"Cannot set effective group to 0", _/binary>> = iolist_to_binary(proplists:get_value(stderr, Details))
         """
       else
         ~S({ok, [{stdout, [<<"group-ok\n">>]}]} -> ok)
